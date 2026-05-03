@@ -280,6 +280,7 @@ export default function App() {
                 {wardrobe.map((item, i) => (
                   <div key={i} className="wardrobe-item">
                     <div className="item-color-dot" style={{ background: colorDot(item.color) }} />
+                    <div className="item-icon">{clothingIcon(item.type)}</div>
                     <div className="item-body">
                       <span className="item-name">{item.color} {item.type}</span>
                       <span className="item-meta">{item.style}{item.notes ? ` · ${item.notes}` : ""}</span>
@@ -345,16 +346,17 @@ export default function App() {
                   )}
                 </div>
                 <button
-                  className={`btn btn-primary btn-xl ${loading ? "btn-loading" : ""}`}
+                  className={`btn btn-primary btn-xl`}
                   onClick={generateOutfits}
                   disabled={loading}
                 >
-                  {loading ? (
-                    <><span className="spinner" />Generating…</>
-                  ) : "Get Outfits"}
+                  {loading ? <><span className="spinner" />Generating…</> : "Get Outfits"}
                 </button>
               </div>
             </div>
+
+            {/* Full-screen loading overlay */}
+            {loading && <LoadingScreen occasion={occasion} />}
 
             {/* RAG explanation card */}
             <div className="rag-explainer-card">
@@ -402,10 +404,25 @@ export default function App() {
               </div>
             )}
 
-            {/* Outfit response */}
-            <div className="outfit-response">
-              <ReactMarkdown>{outfitResult}</ReactMarkdown>
-            </div>
+            {/* Outfit cards — parsed from LLM markdown into structured cards */}
+            {(() => {
+              const parsed = parseOutfits(outfitResult);
+              if (parsed.length > 0) {
+                return (
+                  <div className="outfit-cards">
+                    {parsed.map((outfit, i) => (
+                      <OutfitCard key={i} outfit={outfit} index={i} />
+                    ))}
+                  </div>
+                );
+              }
+              // Fallback: if parsing fails, show raw markdown
+              return (
+                <div className="outfit-response">
+                  <ReactMarkdown>{outfitResult}</ReactMarkdown>
+                </div>
+              );
+            })()}
 
             {/* Follow-up chat */}
             <div className="followup-section">
@@ -474,4 +491,126 @@ function colorDot(color) {
     pink: "#e91e8c", yellow: "#f9a825", orange: "#e65100", purple: "#6a1b9a",
   };
   return map[color.toLowerCase()] || "#bdbdbd";
+}
+
+// Return an emoji icon based on clothing type keywords
+function clothingIcon(type) {
+  const t = type.toLowerCase();
+  if (t.includes("shirt") || t.includes("oxford") || t.includes("blouse")) return "👔";
+  if (t.includes("t-shirt") || t.includes("tee") || t.includes("tank")) return "👕";
+  if (t.includes("jacket") || t.includes("blazer") || t.includes("coat")) return "🧥";
+  if (t.includes("sweater") || t.includes("knit") || t.includes("hoodie") || t.includes("jumper")) return "🧶";
+  if (t.includes("jeans") || t.includes("trouser") || t.includes("chino") || t.includes("pant")) return "👖";
+  if (t.includes("skirt")) return "👗";
+  if (t.includes("dress")) return "👗";
+  if (t.includes("shoe") || t.includes("sneaker") || t.includes("boot") || t.includes("loafer") || t.includes("heel")) return "👟";
+  if (t.includes("bag") || t.includes("tote") || t.includes("backpack") || t.includes("purse")) return "👜";
+  if (t.includes("hat") || t.includes("cap") || t.includes("beanie")) return "🧢";
+  if (t.includes("scarf")) return "🧣";
+  if (t.includes("sock")) return "🧦";
+  if (t.includes("suit")) return "🤵";
+  return "👚";
+}
+
+// Parse the raw markdown from the LLM into structured outfit objects
+// Looks for ## Outfit N: Name blocks and extracts items, why, tip
+function parseOutfits(markdown) {
+  if (!markdown) return [];
+  const outfitBlocks = markdown.split(/(?=##\s*Outfit\s*\d)/i).filter(b => b.trim());
+  return outfitBlocks.map((block, idx) => {
+    const nameMatch = block.match(/##\s*Outfit\s*\d+[:\.\-]?\s*(.+)/i);
+    const itemsMatch = block.match(/\*\*Items?[:\*]*\*?\*?\s*([^\n]+(?:\n(?!\*\*)[^\n]+)*)/i);
+    const whyMatch  = block.match(/\*\*Why it works[:\*]*\*?\*?\s*([^\n]+(?:\n(?!\*\*)[^\n]+)*)/i);
+    const tipMatch  = block.match(/\*\*Styling tip[:\*]*\*?\*?\s*([^\n]+(?:\n(?!\*\*)[^\n]+)*)/i);
+
+    return {
+      number: idx + 1,
+      name:  nameMatch  ? nameMatch[1].replace(/\*+/g, "").trim()  : `Outfit ${idx + 1}`,
+      items: itemsMatch ? itemsMatch[1].replace(/\*+/g, "").trim() : "",
+      why:   whyMatch   ? whyMatch[1].replace(/\*+/g, "").trim()   : "",
+      tip:   tipMatch   ? tipMatch[1].replace(/\*+/g, "").trim()   : "",
+    };
+  }).filter(o => o.name || o.items);
+}
+
+// Accent colors for outfit cards — one per card, cycles
+const CARD_ACCENTS = ["#2a3f6f", "#1e5c3e", "#5c3a1e", "#4a1e5c", "#1e4a5c"];
+
+// The branded loading screen shown during the ~10s generation wait
+function LoadingScreen({ occasion }) {
+  const steps = [
+    { icon: "🔍", label: "Scanning your closet" },
+    { icon: "📚", label: "Retrieving fashion rules (RAG)" },
+    { icon: "🧠", label: "Llama is thinking…" },
+    { icon: "✨", label: "Assembling your outfits" },
+  ];
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setStep(s => Math.min(s + 1, steps.length - 1)), 2200);
+    return () => clearInterval(iv);
+  }, []);
+  return (
+    <div className="loading-screen">
+      <div className="loading-inner">
+        <div className="loading-logo">W</div>
+        <h2 className="loading-title">Building your outfits</h2>
+        {occasion && <p className="loading-occasion">for <em>{occasion}</em></p>}
+        <div className="loading-steps">
+          {steps.map((s, i) => (
+            <div key={i} className={`loading-step ${i <= step ? "loading-step-active" : ""} ${i < step ? "loading-step-done" : ""}`}>
+              <span className="loading-step-icon">{s.icon}</span>
+              <span className="loading-step-label">{s.label}</span>
+              {i < step && <span className="loading-step-check">✓</span>}
+              {i === step && <span className="loading-step-dots"><span className="dot"/><span className="dot"/><span className="dot"/></span>}
+            </div>
+          ))}
+        </div>
+        <p className="loading-hint">This takes about 10–20 seconds on CPU</p>
+      </div>
+    </div>
+  );
+}
+
+// A single parsed outfit rendered as a rich card
+function OutfitCard({ outfit, index }) {
+  const accent = CARD_ACCENTS[index % CARD_ACCENTS.length];
+  const itemList = outfit.items
+    ? outfit.items.split(/,\s*/).filter(Boolean)
+    : [];
+
+  return (
+    <div className="outfit-card" style={{ "--card-accent": accent }}>
+      <div className="outfit-card-header">
+        <div className="outfit-card-number" style={{ background: accent }}>
+          {outfit.number}
+        </div>
+        <h3 className="outfit-card-name">{outfit.name}</h3>
+      </div>
+
+      {itemList.length > 0 && (
+        <div className="outfit-card-items">
+          {itemList.map((item, i) => (
+            <span key={i} className="outfit-item-chip">
+              <span className="outfit-item-icon">{clothingIcon(item)}</span>
+              {item.trim()}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {outfit.why && (
+        <div className="outfit-card-section">
+          <div className="outfit-card-section-label">Why it works</div>
+          <p className="outfit-card-section-text">{outfit.why}</p>
+        </div>
+      )}
+
+      {outfit.tip && (
+        <div className="outfit-card-tip">
+          <span className="outfit-tip-icon">💡</span>
+          <span>{outfit.tip}</span>
+        </div>
+      )}
+    </div>
+  );
 }
