@@ -772,6 +772,94 @@ input.input-lg, select.input-lg {
 
 .chat-input { flex: 1; }
 
+/* ─────────────────────── SUCCESS BANNER ─────────────────────── */
+.success-banner {
+  background: var(--rag);
+  color: white;
+  text-align: center;
+  padding: 10px 24px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  animation: slideDown 0.3s ease, fadeOut 0.5s ease 3.5s forwards;
+}
+
+@keyframes fadeOut {
+  to { opacity: 0; transform: translateY(-4px); }
+}
+
+/* ─────────────────────── CATEGORY FILTER BAR ─────────────────────── */
+.category-filter {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.cat-btn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1.5px solid var(--rule);
+  background: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cat-btn:hover { border-color: var(--ink-soft); color: var(--ink); }
+
+.cat-btn-active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+/* ─────────────────────── EMPTY STATE ─────────────────────── */
+.empty-sub {
+  font-size: 13px;
+  color: var(--ink-muted);
+  margin-top: 6px;
+}
+
+.chip-warn {
+  color: #b45309;
+  font-size: 11px;
+}
+
+/* ─────────────────────── COLOR PALETTE SWATCHES ─────────────────────── */
+.color-palette {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.color-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(0,0,0,0.12);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+  cursor: default;
+}
+
+.color-swatch:hover { transform: scale(1.25); }
+
+.palette-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--ink-muted);
+  margin-left: 2px;
+}
+
 /* ─────────────────────── RESPONSIVE ─────────────────────── */
 @media (max-width: 640px) {
   .header-inner { padding: 0 16px; }
@@ -784,9 +872,10 @@ input.input-lg, select.input-lg {
   .outfit-response { padding: 18px 16px; }
   .logo-sub { display: none; }
   .chat-bubble { max-width: 90%; }
+  .outfit-card-name { font-size: 17px; }
+  .outfit-item-chip { font-size: 12px; padding: 4px 10px; }
+  .loading-screen { padding: 32px 20px; }
 }
-
-/* ─────────────────────── CLOTHING ICON IN WARDROBE LIST ─────────────────────── */
 /* In App.js, find the wardrobe-item div and note the .item-icon span sits
    between .item-color-dot and .item-body — this styles that icon */
 .item-icon {

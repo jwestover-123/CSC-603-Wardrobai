@@ -1,18 +1,21 @@
 """
 WardrobeAI Backend — Flask API
 Model: Llama 3.1 8B (or 3.2 3B) via Ollama — fully local, no API key required.
-RAG concept: a curated fashion knowledge base is retrieved and injected into
-the prompt before each generation (Retrieval-Augmented Generation).
 
-Quality improvements over the original notebook:
-  1. Few-shot examples in the system prompt (biggest quality boost for small models)
-  2. Lower temperature (0.3) — more focused, less hallucination
-  3. RAG context injected per request — grounded fashion knowledge
-  4. Strict output template — rigid fill-in-the-blank format small models follow reliably
+Improvements in this version:
+  1. RAG synonym expansion — "networking" → business casual, "brunch" → smart casual, etc.
+  2. Session persistence via JSON file — survives backend restarts mid-demo
+  3. Minimum wardrobe item check — warns user before sending bad prompts to LLM
+  4. Season/month injection — tells Llama the current season for contextual suggestions
+  5. Input sanitization — trims and caps field lengths before they reach the prompt
 """
 
 import os
+import json
+import time
+import datetime
 import requests
+from pathlib import Path
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -20,145 +23,227 @@ app = Flask(__name__)
 CORS(app)
 
 # ── Ollama config ─────────────────────────────────────────────────────────────
-# Default: llama3.1:8b  (best quality, needs ~5GB RAM)
-# Fallback: llama3.2    (3B, lighter, needs ~2GB RAM)
-# Change OLLAMA_MODEL env var to override: export OLLAMA_MODEL=llama3.2
 OLLAMA_URL   = os.environ.get("OLLAMA_URL",   "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+
+# ── Session persistence — survives backend restarts ───────────────────────────
+SESSION_FILE = Path(__file__).parent / "sessions.json"
+
+def load_sessions() -> dict:
+    try:
+        if SESSION_FILE.exists():
+            return json.loads(SESSION_FILE.read_text())
+    except Exception:
+        pass
+    return {}
+
+def save_sessions(sessions: dict):
+    try:
+        SESSION_FILE.write_text(json.dumps(sessions))
+    except Exception:
+        pass
+
+sessions = load_sessions()
+
 # ─────────────────────────────────────────────────────────────────────────────
+# SEASON HELPER
+# Injecting the current season into the prompt costs nothing and meaningfully
+# improves suggestion quality — a knit sweater recommendation in July is unhelpful.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_season() -> str:
+    month = datetime.datetime.now().month
+    if month in (12, 1, 2):  return "Winter"
+    if month in (3, 4, 5):   return "Spring"
+    if month in (6, 7, 8):   return "Summer"
+    return "Autumn/Fall"
+
+def get_month_name() -> str:
+    return datetime.datetime.now().strftime("%B")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RAG KNOWLEDGE BASE
-# In a production system this would be a vector DB (Pinecone, Chroma, etc.)
-# and embeddings model. For this capstone demo we use TF-IDF-style keyword
-# matching over a curated fashion rule set — the concept is identical to RAG:
-#   1. Store domain knowledge as "documents"
-#   2. Retrieve the most relevant docs given the query
-#   3. Inject retrieved docs into the prompt (Retrieval-Augmented Generation)
 # ─────────────────────────────────────────────────────────────────────────────
 
 FASHION_KNOWLEDGE_BASE = [
     {
         "id": "color-neutrals",
-        "tags": ["color", "neutral", "basics", "versatile"],
+        "tags": ["color", "neutral", "basics", "versatile", "pairing", "match"],
         "rule": "Neutral colors (white, black, navy, grey, beige, olive) are the backbone of a functional wardrobe. Any two neutrals can be combined safely. Navy and tan are a classic pairing; grey and white feel clean and modern."
     },
     {
         "id": "color-contrast",
-        "tags": ["color", "contrast", "pairing"],
+        "tags": ["color", "contrast", "pairing", "light", "dark", "tonal"],
         "rule": "For visual interest, pair a light piece with a dark one. Avoid wearing the same value (e.g., medium grey shirt + medium grey pants) — it reads as flat and unintentional."
     },
     {
         "id": "business-casual",
-        "tags": ["business casual", "office", "work", "friday", "professional"],
+        "tags": ["business casual", "office", "work", "friday", "professional", "networking",
+                 "conference", "meeting", "corporate", "colleague", "workplace", "hybrid"],
         "rule": "Business casual typically means: tailored trousers or chinos (not jeans), a collared shirt or clean knit sweater, and smart shoes (Chelsea boots, loafers, clean leather sneakers). A blazer elevates any business casual look instantly."
     },
     {
         "id": "date-night",
-        "tags": ["date", "date night", "romantic", "evening", "dinner"],
+        "tags": ["date", "date night", "romantic", "evening", "dinner", "restaurant",
+                 "anniversary", "first date", "night out", "drinks", "cocktails"],
         "rule": "Date night outfits should feel intentional but effortless. A well-fitted outfit in one or two refined colors (navy, cream, charcoal) signals effort without trying too hard. Chelsea boots or clean leather shoes over sneakers. Avoid overly casual pieces like athletic wear."
     },
     {
         "id": "casual-weekend",
-        "tags": ["casual", "weekend", "relaxed", "everyday"],
+        "tags": ["casual", "weekend", "relaxed", "everyday", "errands", "brunch",
+                 "coffee", "park", "friends", "day off", "hanging out", "chill"],
         "rule": "Casual outfits benefit from texture play: pair a smooth item (chinos) with a textured one (knit sweater). Clean sneakers or canvas shoes work well. T-shirts look best when they fit well — not too baggy, not too tight."
     },
     {
         "id": "layering",
-        "tags": ["layering", "cold", "winter", "autumn", "fall", "sweater", "blazer", "jacket"],
+        "tags": ["layering", "cold", "winter", "autumn", "fall", "sweater", "blazer",
+                 "jacket", "chilly", "coat", "warm", "layer"],
         "rule": "Layering rule: the innermost layer should be the most fitted; outer layers can be looser. A fitted t-shirt under a relaxed knit sweater under a blazer is a classic 3-layer stack. Ensure collar/neckline visibility is intentional."
     },
     {
         "id": "smart-casual",
-        "tags": ["smart casual", "cocktail", "bar", "event", "party"],
+        "tags": ["smart casual", "cocktail", "bar", "event", "party", "gallery",
+                 "opening", "social", "gathering", "semi-formal", "networking event"],
         "rule": "Smart casual sits between casual and business casual. Dark jeans (no rips) can replace trousers. A blazer over a clean t-shirt or Oxford shirt works well. Chelsea boots are the most versatile footwear for smart casual."
     },
     {
         "id": "proportions",
-        "tags": ["fit", "proportion", "slim", "oversized", "silhouette"],
+        "tags": ["fit", "proportion", "slim", "oversized", "silhouette", "baggy",
+                 "relaxed", "fitted", "tailored", "loose"],
         "rule": "Proportion rule: balance a loose/oversized top with fitted bottoms, or a fitted top with relaxed bottoms. Wearing both loose simultaneously creates a shapeless silhouette. Slim chinos with an oversized knit is a modern, intentional combination."
     },
     {
         "id": "shoes-formality",
-        "tags": ["shoes", "sneakers", "boots", "formality", "footwear"],
+        "tags": ["shoes", "sneakers", "boots", "formality", "footwear", "chelsea",
+                 "loafer", "dress shoes", "trainers", "leather"],
         "rule": "Shoe formality ladder (casual → formal): canvas sneakers → leather sneakers → Chelsea boots → loafers → dress shoes. Match shoe formality to the formality of the rest of the outfit. Chelsea boots are uniquely versatile — they work from smart casual through business casual."
     },
     {
         "id": "interview",
-        "tags": ["interview", "job", "formal", "professional", "presentation"],
+        "tags": ["interview", "job", "formal", "professional", "presentation", "client",
+                 "pitch", "meeting", "important", "graduate", "career"],
         "rule": "For interviews or formal presentations: prioritize tailored pieces. Charcoal or navy trousers with a white or light blue Oxford shirt and a blazer is a reliable formula. Ensure shoes are clean and closed-toe. Avoid overly casual accessories."
     },
     {
         "id": "minimalist",
-        "tags": ["minimalist", "minimal", "clean", "simple", "monochrome"],
+        "tags": ["minimalist", "minimal", "clean", "simple", "monochrome", "tonal",
+                 "understated", "quiet luxury", "classic"],
         "rule": "Minimalist dressing: stick to 2-3 neutral colors per outfit, limit visible logos, prioritize clean silhouettes and good fit over decoration. Tonal dressing (different shades of the same color) is a minimalist hallmark."
     },
     {
         "id": "accessories",
-        "tags": ["accessories", "bag", "tote", "watch", "belt"],
+        "tags": ["accessories", "bag", "tote", "watch", "belt", "scarf", "hat",
+                 "sunglasses", "jewelry"],
         "rule": "Accessories should complement, not compete. A canvas tote bag reads as casual and should be paired with casual to smart casual outfits, not formal ones. Match bag material/tone to the overall outfit formality."
     },
     {
         "id": "texture-mixing",
-        "tags": ["texture", "knit", "cotton", "denim", "mix", "fabric"],
+        "tags": ["texture", "knit", "cotton", "denim", "mix", "fabric", "material",
+                 "wool", "linen", "leather", "canvas"],
         "rule": "Mixing textures adds depth: denim + knit wool, cotton Oxford + chino fabric, leather + casual cotton all create interesting contrasts. Avoid mixing two very similar textures (e.g., two knit pieces) without a clear intentional reason."
     },
     {
         "id": "streetwear",
-        "tags": ["streetwear", "urban", "sneakers", "hoodie", "hype"],
+        "tags": ["streetwear", "urban", "sneakers", "hoodie", "hype", "hypebeast",
+                 "skate", "casual cool", "edgy", "youth"],
         "rule": "Streetwear styling: sneakers are the hero piece — outfit builds outward from them. Oversized proportions are intentional. Monochrome or tonal looks (all black, all grey) are streetwear staples. Clean, high-quality basics elevate the look."
     },
     {
         "id": "color-navy",
-        "tags": ["navy", "blue", "blazer"],
+        "tags": ["navy", "blue", "blazer", "navy blue"],
         "rule": "Navy is one of the most versatile colors in menswear. Navy blazer pairs with: white, cream, grey, olive, tan, charcoal. Navy top pairs with: olive trousers, khaki chinos, dark jeans, light grey trousers. Avoid pairing navy with black — it reads as a mistake rather than intentional."
     },
+    {
+        "id": "summer-dressing",
+        "tags": ["summer", "hot", "warm weather", "beach", "outdoor", "festival",
+                 "vacation", "holiday", "picnic", "barbecue", "bbq"],
+        "rule": "Summer dressing: prioritize lightweight fabrics (linen, cotton). Light colors reflect heat. Fewer layers — a well-chosen single layer is more effective than forcing a layered look in heat. Breathable shoes like canvas sneakers or loafers over heavy boots."
+    },
+    {
+        "id": "winter-dressing",
+        "tags": ["winter", "cold", "freezing", "snow", "coat", "heavy", "warm",
+                 "december", "january", "february"],
+        "rule": "Winter dressing: a strong outerwear piece (wool coat, heavy jacket) is the anchor. Layer underneath — the inner layers can be lighter because the coat provides warmth. Dark tones (navy, charcoal, black) are winter staples and easy to coordinate."
+    },
 ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SYNONYM MAP — expands natural language occasion terms to RAG-searchable tags
+# This directly fixes the "networking event" retrieval failure.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SYNONYM_MAP = {
+    # Business / work
+    "networking": "business casual professional",
+    "conference": "business casual professional",
+    "meeting":    "business casual professional",
+    "corporate":  "business casual professional office",
+    "client":     "business casual professional interview",
+    "pitch":      "interview professional presentation",
+    "intern":     "business casual professional",
+    "graduate":   "interview formal professional",
+    # Social
+    "brunch":     "casual smart casual weekend",
+    "coffee":     "casual weekend relaxed",
+    "bar":        "smart casual evening drinks",
+    "club":       "smart casual evening night out",
+    "gala":       "formal evening",
+    "wedding":    "formal smart casual event",
+    "gallery":    "smart casual opening event",
+    "festival":   "casual streetwear outdoor summer",
+    "picnic":     "casual weekend outdoor summer",
+    "barbecue":   "casual weekend outdoor summer",
+    "bbq":        "casual weekend outdoor summer",
+    "hike":       "casual outdoor athletic",
+    "gym":        "athleisure casual",
+    # Seasons
+    "summer":     "summer warm weather outdoor",
+    "winter":     "winter cold layering coat",
+    "spring":     "casual smart casual",
+    "fall":       "autumn layering",
+    "autumn":     "autumn layering",
+}
+
+def expand_query(query: str) -> str:
+    """Expand the raw query with synonym terms for better RAG retrieval."""
+    words  = query.lower().split()
+    extras = []
+    for word in words:
+        if word in SYNONYM_MAP:
+            extras.append(SYNONYM_MAP[word])
+    return query + " " + " ".join(extras)
 
 
 def simple_rag_retrieve(query: str, wardrobe: list, top_k: int = 4) -> list[dict]:
     """
-    Lightweight RAG retrieval using keyword overlap (TF-IDF spirit).
-    In production: replace with cosine similarity over sentence embeddings.
-
-    The query is constructed from the occasion + wardrobe item types/styles,
-    then matched against each knowledge document's tags and rule text.
-    Returns the top_k most relevant fashion rules.
+    Keyword + synonym RAG retrieval.
+    Expands the query first, then scores each knowledge doc by tag and word overlap.
+    In production: replace scoring with cosine similarity over sentence embeddings.
     """
-    # Build a rich query signal from occasion + wardrobe metadata
-    query_lower = query.lower()
-    wardrobe_styles = " ".join([
+    expanded = expand_query(query)
+    wardrobe_signal = " ".join([
         f"{it.get('style','')} {it.get('type','')} {it.get('color','')}"
         for it in wardrobe
     ]).lower()
-    full_signal = query_lower + " " + wardrobe_styles
+    full_signal = expanded.lower() + " " + wardrobe_signal
 
     scored = []
     for doc in FASHION_KNOWLEDGE_BASE:
         score = 0
-        # Tag match (high weight)
         for tag in doc["tags"]:
             if tag in full_signal:
                 score += 3
-        # Rule text word overlap (lower weight)
-        rule_words = set(doc["rule"].lower().split())
+        rule_words   = set(doc["rule"].lower().split())
         signal_words = set(full_signal.split())
-        overlap = rule_words & signal_words
-        score += len(overlap) * 0.5
+        score += len(rule_words & signal_words) * 0.5
         scored.append((score, doc))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [doc for _, doc in scored[:top_k] if _ > 0]
+    return [doc for score, doc in scored[:top_k] if score > 0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SYSTEM PROMPT — Few-shot version
-#
-# Quality improvement #1: Few-shot examples
-# Small models like Llama 3B/8B follow structural patterns much more reliably
-# when shown a concrete example rather than just described rules. The example
-# below acts as a template the model fills in, dramatically reducing format
-# failures and item hallucination.
+# SYSTEM PROMPT — Few-shot with strict format
 # ─────────────────────────────────────────────────────────────────────────────
 
 BASE_SYSTEM_PROMPT = """You are WardrobeAI, a personal outfit assistant. Your job is to suggest outfits using ONLY the clothing items the user provides. Never invent or add items that are not in the wardrobe list.
@@ -166,12 +251,14 @@ BASE_SYSTEM_PROMPT = """You are WardrobeAI, a personal outfit assistant. Your jo
 You will receive:
 - WARDROBE: a numbered list of clothing items the user owns
 - OCCASION: the event or context to dress for
+- SEASON: the current season — consider this for layering and fabric weight
 - STYLE PREFERENCE: optional aesthetic direction
 - FASHION RULES: expert styling knowledge to apply (from RAG retrieval)
 
 CRITICAL RULES:
 - Use ONLY items from the WARDROBE list. Copy item names exactly as written.
 - Suggest exactly 3 outfits using different item combinations.
+- Consider the SEASON when choosing layers and weights.
 - Follow the exact format shown in the example below.
 - Do not add commentary before or after the 3 outfits.
 
@@ -186,10 +273,11 @@ WARDROBE:
 5. White Leather sneakers (Casual style)
 
 OCCASION: Smart casual dinner
+SEASON: Autumn/Fall
 
 ## Outfit 1: Clean & Sharp
 **Items:** White Cotton t-shirt, Black Slim jeans, Tan Chelsea boots, Grey Wool blazer
-**Why it works:** The grey blazer elevates the casual t-shirt and jeans into smart casual territory. Tan Chelsea boots add warmth and follow the shoe formality rule — more polished than sneakers without being overdressed.
+**Why it works:** The grey blazer elevates the casual t-shirt and jeans into smart casual territory. Tan Chelsea boots add warmth and follow the shoe formality rule — more polished than sneakers without being overdressed. The autumn season makes the blazer layer practical and stylish.
 **Styling tip:** Leave the blazer unbuttoned and roll the jeans one cuff for a relaxed-but-intentional look.
 
 ## Outfit 2: Minimal Edge
@@ -218,30 +306,33 @@ def format_wardrobe(wardrobe: list) -> str:
     return "\n".join(lines)
 
 
+def sanitize_str(s: str, max_len: int = 200) -> str:
+    """Trim and cap string length before injecting into the prompt."""
+    return str(s).strip()[:max_len] if s else ""
+
+
 def call_ollama(messages: list, max_tokens: int = 1200) -> str:
     """
-    Call the local Ollama server.
-    Uses temperature=0.3 (quality improvement #2 — more focused output,
-    less likely to hallucinate items or drift from the format template).
-
-    Ollama's /api/chat endpoint accepts OpenAI-compatible message format.
+    Call the local Ollama server with tuned generation parameters.
+    temperature=0.3 — focused, less hallucination
+    repeat_penalty=1.1 — discourages repetitive phrasing
     """
     payload = {
         "model": OLLAMA_MODEL,
         "messages": messages,
         "stream": False,
         "options": {
-            "temperature": 0.3,       # Lower = more deterministic, fewer hallucinations
-            "num_predict": max_tokens, # Cap token output so model doesn't ramble
-            "top_p": 0.9,
-            "repeat_penalty": 1.1,    # Discourage repetitive phrasing
+            "temperature":    0.3,
+            "num_predict":    max_tokens,
+            "top_p":          0.9,
+            "repeat_penalty": 1.1,
         },
     }
     try:
         resp = requests.post(
             f"{OLLAMA_URL}/api/chat",
             json=payload,
-            timeout=120,  # Llama on CPU can take up to ~60s; 120s gives headroom
+            timeout=120,
         )
         resp.raise_for_status()
         return resp.json()["message"]["content"]
@@ -251,20 +342,19 @@ def call_ollama(messages: list, max_tokens: int = 1200) -> str:
             "Is Ollama running? Start it with: ollama serve"
         )
     except requests.exceptions.Timeout:
-        raise RuntimeError("Ollama request timed out. The model may still be loading — try again in a moment.")
+        raise RuntimeError("Ollama request timed out. The model may still be loading — try again.")
     except Exception as e:
         raise RuntimeError(f"Ollama error: {e}")
 
 
-# In-memory session store (keyed by session_id sent from frontend)
-sessions: dict[str, list] = {}
-
+# ─────────────────────────────────────────────────────────────────────────────
+# ROUTES
+# ─────────────────────────────────────────────────────────────────────────────
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    # Ping Ollama to check if it's running and the model is available
     try:
-        resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+        resp   = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
         models = [m["name"] for m in resp.json().get("models", [])]
         model_ready = any(OLLAMA_MODEL.split(":")[0] in m for m in models)
         return jsonify({
@@ -272,43 +362,66 @@ def health():
             "backend": "ollama",
             "model": OLLAMA_MODEL,
             "model_ready": model_ready,
-            "available_models": models,
+            "season": get_season(),
+            "month": get_month_name(),
         })
     except Exception:
         return jsonify({
             "status": "ollama_offline",
             "model": OLLAMA_MODEL,
-            "hint": f"Start Ollama with: ollama serve  |  Pull model with: ollama pull {OLLAMA_MODEL}"
+            "hint": f"Start Ollama: ollama serve  |  Pull model: ollama pull {OLLAMA_MODEL}"
         }), 503
 
 
 @app.route("/api/generate", methods=["POST"])
 def generate():
-    data = request.json
-    wardrobe = data.get("wardrobe", [])
-    occasion = data.get("occasion", "")
-    style_pref = data.get("style_pref", "")
-    session_id = data.get("session_id", "default")
+    data       = request.json
+    wardrobe   = data.get("wardrobe", [])
+    occasion   = sanitize_str(data.get("occasion", ""), 300)
+    style_pref = sanitize_str(data.get("style_pref", ""), 200)
+    session_id = sanitize_str(data.get("session_id", "default"), 50)
 
+    # ── Input validation ──────────────────────────────────────────────────────
     if not wardrobe:
         return jsonify({"error": "Please add at least one item to your wardrobe first."}), 400
     if not occasion:
         return jsonify({"error": "Please enter an occasion."}), 400
 
-    # ── RAG STEP: retrieve relevant fashion rules ──────────────────────────
-    rag_query = f"{occasion} {style_pref}"
-    retrieved_docs = simple_rag_retrieve(rag_query, wardrobe, top_k=4)
+    # Minimum item check — warn user before the LLM gets a bad prompt
+    if len(wardrobe) < 3:
+        return jsonify({
+            "error": f"You have {len(wardrobe)} item(s) in your closet. Add at least 3 for meaningful outfit variety."
+        }), 400
+
+    # Sanitize each wardrobe item
+    clean_wardrobe = [
+        {
+            "type":  sanitize_str(it.get("type", "Item"), 80),
+            "color": sanitize_str(it.get("color", ""), 50),
+            "style": sanitize_str(it.get("style", "Casual"), 50),
+            "notes": sanitize_str(it.get("notes", ""), 100),
+        }
+        for it in wardrobe
+    ]
+
+    # ── RAG retrieval with synonym expansion ─────────────────────────────────
+    rag_query     = f"{occasion} {style_pref}"
+    retrieved_docs = simple_rag_retrieve(rag_query, clean_wardrobe, top_k=4)
     rag_context = ""
     if retrieved_docs:
-        rag_context = "\n\nFASHION RULES (apply these in your outfit explanations):\n"
+        rag_context = "\nFASHION RULES (apply these in your outfit explanations):\n"
         for doc in retrieved_docs:
             rag_context += f"- [{doc['id']}] {doc['rule']}\n"
-    # ──────────────────────────────────────────────────────────────────────
 
-    # Build the user message — clear labeled sections help small models parse context
+    # ── Season injection ─────────────────────────────────────────────────────
+    season = get_season()
+    month  = get_month_name()
+
+    # ── Build prompt ──────────────────────────────────────────────────────────
     user_msg = (
-        f"WARDROBE:\n{format_wardrobe(wardrobe)}\n\n"
-        f"OCCASION: {occasion}"
+        f"WARDROBE:\n{format_wardrobe(clean_wardrobe)}\n\n"
+        f"OCCASION: {occasion}\n"
+        f"SEASON: {season} ({month})"
     )
     if style_pref:
         user_msg += f"\nSTYLE PREFERENCE: {style_pref}"
@@ -320,15 +433,18 @@ def generate():
         {"role": "user",   "content": user_msg},
     ]
     sessions[session_id] = messages
+    save_sessions(sessions)
 
     try:
         reply = call_ollama(messages, max_tokens=1200)
         sessions[session_id].append({"role": "assistant", "content": reply})
+        save_sessions(sessions)
         return jsonify({
-            "reply": reply,
-            "rag_docs": [{"id": d["id"], "rule": d["rule"]} for d in retrieved_docs],
+            "reply":     reply,
+            "rag_docs":  [{"id": d["id"], "rule": d["rule"]} for d in retrieved_docs],
             "rag_count": len(retrieved_docs),
-            "model": OLLAMA_MODEL,
+            "model":     OLLAMA_MODEL,
+            "season":    season,
         })
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 503
@@ -338,9 +454,9 @@ def generate():
 
 @app.route("/api/followup", methods=["POST"])
 def followup():
-    data = request.json
-    message = data.get("message", "")
-    session_id = data.get("session_id", "default")
+    data       = request.json
+    message    = sanitize_str(data.get("message", ""), 500)
+    session_id = sanitize_str(data.get("session_id", "default"), 50)
 
     if not message:
         return jsonify({"error": "Message cannot be empty."}), 400
@@ -348,10 +464,12 @@ def followup():
         return jsonify({"error": "Generate outfits first before asking a follow-up."}), 400
 
     sessions[session_id].append({"role": "user", "content": message})
+    save_sessions(sessions)
 
     try:
         reply = call_ollama(sessions[session_id], max_tokens=800)
         sessions[session_id].append({"role": "assistant", "content": reply})
+        save_sessions(sessions)
         return jsonify({"reply": reply})
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 503
@@ -361,17 +479,20 @@ def followup():
 
 @app.route("/api/rag-info", methods=["GET"])
 def rag_info():
-    """Expose the knowledge base for the UI 'How it works' panel."""
     return jsonify({
         "total_docs": len(FASHION_KNOWLEDGE_BASE),
-        "model": OLLAMA_MODEL,
+        "model":      OLLAMA_MODEL,
+        "season":     get_season(),
         "docs": [{"id": d["id"], "tags": d["tags"], "rule": d["rule"]}
                  for d in FASHION_KNOWLEDGE_BASE]
     })
 
 
 if __name__ == "__main__":
-    print(f"WardrobeAI backend starting — model: {OLLAMA_MODEL}")
-    print(f"Ollama URL: {OLLAMA_URL}")
-    print("Tip: override model with OLLAMA_MODEL=llama3.2 python app.py")
+    print(f"WardrobeAI backend starting")
+    print(f"  Model:  {OLLAMA_MODEL}")
+    print(f"  Ollama: {OLLAMA_URL}")
+    print(f"  Season: {get_season()} ({get_month_name()})")
+    print(f"  Sessions loaded: {len(sessions)}")
+    print("  Override model: OLLAMA_MODEL=llama3.2 python app.py")
     app.run(debug=True, port=5000)

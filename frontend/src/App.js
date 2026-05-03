@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import "./App.css";
 
@@ -10,17 +10,54 @@ const STYLE_OPTIONS = [
   "Formal", "Streetwear", "Bohemian", "Minimalist", "Classic", "Athleisure"
 ];
 
+// ── Clothing categories for grouped closet view ───────────────────────────
+const CATEGORIES = [
+  { key: "tops",        label: "Tops",        keywords: ["shirt", "oxford", "blouse", "t-shirt", "tee", "tank", "sweater", "knit", "hoodie", "jumper", "polo"] },
+  { key: "outerwear",   label: "Outerwear",   keywords: ["jacket", "blazer", "coat", "cardigan", "vest"] },
+  { key: "bottoms",     label: "Bottoms",     keywords: ["jeans", "trouser", "chino", "pant", "skirt", "shorts", "legging"] },
+  { key: "shoes",       label: "Shoes",       keywords: ["shoe", "sneaker", "boot", "loafer", "heel", "sandal"] },
+  { key: "accessories", label: "Accessories", keywords: ["bag", "tote", "backpack", "purse", "hat", "cap", "beanie", "scarf", "sock", "belt", "watch", "tie"] },
+];
+
+function getCategory(type) {
+  const t = type.toLowerCase();
+  for (const cat of CATEGORIES) {
+    if (cat.keywords.some(k => t.includes(k))) return cat.key;
+  }
+  return "other";
+}
+
 const DEMO_WARDROBE = [
-  { type: "White Oxford shirt", color: "White",     style: "Classic",          notes: "slightly oversized" },
-  { type: "Chinos",             color: "Olive",     style: "Smart casual",     notes: "slim fit" },
-  { type: "T-shirt",            color: "Grey",      style: "Casual",           notes: "crew neck" },
-  { type: "Jeans",              color: "Dark wash", style: "Casual",           notes: "straight leg" },
-  { type: "Blazer",             color: "Navy",      style: "Business casual",  notes: "single breasted" },
-  { type: "Sneakers",           color: "White",     style: "Casual",           notes: "low-top leather" },
-  { type: "Chelsea boots",      color: "Tan",       style: "Smart casual",     notes: "" },
+  // Tops
+  { type: "Oxford shirt",       color: "White",     style: "Classic",          notes: "slightly oversized" },
+  { type: "Oxford shirt",       color: "Light blue", style: "Classic",         notes: "slim fit" },
+  { type: "Dress shirt",        color: "White",     style: "Formal",           notes: "crisp, French tuck friendly" },
+  { type: "T-shirt",            color: "Grey",      style: "Casual",           notes: "crew neck, fitted" },
+  { type: "T-shirt",            color: "White",     style: "Casual",           notes: "crew neck, slightly oversized" },
+  { type: "T-shirt",            color: "Black",     style: "Casual",           notes: "crew neck" },
   { type: "Knit sweater",       color: "Cream",     style: "Casual",           notes: "slightly oversized, ribbed" },
-  { type: "Trousers",           color: "Charcoal",  style: "Formal",           notes: "tapered" },
+  { type: "Knit sweater",       color: "Burgundy",  style: "Smart casual",     notes: "crewneck, slim fit" },
+  { type: "Polo shirt",         color: "Navy",      style: "Smart casual",     notes: "pique cotton" },
+  // Outerwear
+  { type: "Blazer",             color: "Navy",      style: "Business casual",  notes: "single breasted, slim fit" },
+  { type: "Blazer",             color: "Tan",       style: "Smart casual",     notes: "unstructured, relaxed" },
+  { type: "Denim jacket",       color: "Light wash", style: "Casual",          notes: "slightly oversized" },
+  { type: "Wool overcoat",      color: "Charcoal",  style: "Formal",           notes: "longline, double breasted" },
+  // Bottoms
+  { type: "Chinos",             color: "Olive",     style: "Smart casual",     notes: "slim fit" },
+  { type: "Chinos",             color: "Khaki",     style: "Smart casual",     notes: "straight leg" },
+  { type: "Jeans",              color: "Dark wash", style: "Casual",           notes: "straight leg" },
+  { type: "Jeans",              color: "Black",     style: "Smart casual",     notes: "slim fit, no distressing" },
+  { type: "Trousers",           color: "Charcoal",  style: "Formal",           notes: "tapered, pleated" },
+  { type: "Trousers",           color: "Beige",     style: "Smart casual",     notes: "wide leg, linen blend" },
+  // Shoes
+  { type: "Sneakers",           color: "White",     style: "Casual",           notes: "low-top leather" },
+  { type: "Chelsea boots",      color: "Tan",       style: "Smart casual",     notes: "suede" },
+  { type: "Chelsea boots",      color: "Black",     style: "Business casual",  notes: "leather, polished" },
+  { type: "Loafers",            color: "Brown",     style: "Smart casual",     notes: "penny loafer, leather" },
+  // Accessories
   { type: "Tote bag",           color: "Canvas",    style: "Casual",           notes: "natural color" },
+  { type: "Leather belt",       color: "Brown",     style: "Classic",          notes: "dress belt, silver buckle" },
 ];
 
 function useLocalStorage(key, initial) {
@@ -32,31 +69,32 @@ function useLocalStorage(key, initial) {
   return [val, setVal];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN APP
+// ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
   const [wardrobe, setWardrobe] = useLocalStorage("wai_wardrobe", []);
   const [tab, setTab] = useState("closet");
 
-  // Add item form
   const [form, setForm] = useState({ type: "", color: "", style: "Casual", notes: "" });
   const [addMsg, setAddMsg] = useState(null);
 
-  // Outfit generation
   const [occasion, setOccasion] = useState("");
   const [stylePref, setStylePref] = useState("");
   const [loading, setLoading] = useState(false);
   const [outfitResult, setOutfitResult] = useState(null);
   const [ragDocs, setRagDocs] = useState([]);
   const [error, setError] = useState(null);
+  const [successBanner, setSuccessBanner] = useState(false);
 
-  // Chat follow-up
   const [followup, setFollowup] = useState("");
   const [chatHistory, setChatHistory] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef(null);
 
-  // RAG panel
   const [ragKb, setRagKb] = useState([]);
   const [showRagPanel, setShowRagPanel] = useState(false);
+  const [activeCategory, setActiveCategory] = useState("all");
 
   useEffect(() => {
     fetch(`${API}/api/rag-info`)
@@ -76,7 +114,7 @@ export default function App() {
     }
     setWardrobe(prev => [...prev, { ...form }]);
     setForm(f => ({ ...f, type: "", color: "", notes: "" }));
-    setAddMsg({ type: "ok", text: "Item added to your closet." });
+    setAddMsg({ type: "ok", text: `${form.color} ${form.type} added to your closet.` });
     setTimeout(() => setAddMsg(null), 2500);
   };
 
@@ -94,6 +132,7 @@ export default function App() {
     setChatHistory([]);
     setRagDocs([]);
     setError(null);
+    setSuccessBanner(false);
   };
 
   const generateOutfits = async () => {
@@ -104,6 +143,7 @@ export default function App() {
     setOutfitResult(null);
     setChatHistory([]);
     setRagDocs([]);
+    setSuccessBanner(false);
     try {
       const res = await fetch(`${API}/api/generate`, {
         method: "POST",
@@ -115,7 +155,9 @@ export default function App() {
       else {
         setOutfitResult(data.reply);
         setRagDocs(data.rag_docs || []);
+        setSuccessBanner(true);
         setTab("outfits");
+        setTimeout(() => setSuccessBanner(false), 4000);
       }
     } catch (e) { setError("Could not connect to backend. Is it running?"); }
     setLoading(false);
@@ -123,7 +165,6 @@ export default function App() {
 
   const sendFollowup = async () => {
     if (!followup.trim()) return;
-    if (!outfitResult) { setError("Generate outfits first."); return; }
     const msg = followup;
     setFollowup("");
     setChatHistory(h => [...h, { role: "user", content: msg }]);
@@ -141,7 +182,19 @@ export default function App() {
     setChatLoading(false);
   };
 
-  const handleFollowupKey = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendFollowup(); } };
+  const handleFollowupKey = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendFollowup(); }
+  };
+
+  const categoryCounts = CATEGORIES.reduce((acc, cat) => {
+    acc[cat.key] = wardrobe.filter(i => getCategory(i.type) === cat.key).length;
+    return acc;
+  }, { all: wardrobe.length });
+
+  const filteredWardrobe = (activeCategory === "all"
+    ? wardrobe.map((item, idx) => ({ ...item, _idx: idx }))
+    : wardrobe.map((item, idx) => ({ ...item, _idx: idx })).filter(i => getCategory(i.type) === activeCategory)
+  );
 
   return (
     <div className="app">
@@ -164,6 +217,13 @@ export default function App() {
         </div>
       </header>
 
+      {/* ── SUCCESS BANNER ── */}
+      {successBanner && (
+        <div className="success-banner">
+          ✨ 3 outfits ready for <strong>{occasion}</strong>
+        </div>
+      )}
+
       {/* ── RAG PANEL ── */}
       {showRagPanel && (
         <div className="rag-panel">
@@ -173,11 +233,10 @@ export default function App() {
               <button className="rag-close" onClick={() => setShowRagPanel(false)}>✕</button>
             </div>
             <p className="rag-explain">
-              This is WardrobeAI's RAG knowledge base — {ragKb.length} curated fashion rules
-              stored as "documents". When you generate outfits, the system <strong>retrieves</strong> the
-              most relevant rules using keyword matching (production systems use vector embeddings),
-              then <strong>injects</strong> them into the prompt before calling the LLM. This is
-              Retrieval-Augmented Generation.
+              This is WardrobeAI's RAG knowledge base — {ragKb.length} curated fashion rules stored
+              as "documents". When you generate outfits, the system <strong>retrieves</strong> the most
+              relevant rules using keyword + synonym matching (e.g. "networking" maps to business casual),
+              then <strong>injects</strong> them into the Llama prompt. That's Retrieval-Augmented Generation.
             </p>
             <div className="rag-docs-grid">
               {ragKb.map(doc => (
@@ -196,9 +255,9 @@ export default function App() {
         {/* ── NAV TABS ── */}
         <nav className="tabs">
           {[
-            { id: "closet", label: `Closet (${wardrobe.length})` },
+            { id: "closet",   label: `Closet (${wardrobe.length})` },
             { id: "generate", label: "Generate" },
-            { id: "outfits", label: "Outfits", disabled: !outfitResult },
+            { id: "outfits",  label: "Outfits", disabled: !outfitResult },
           ].map(t => (
             <button
               key={t.id}
@@ -208,9 +267,7 @@ export default function App() {
           ))}
         </nav>
 
-        {/* ══════════════════════════════════════════════════
-            TAB: CLOSET
-        ══════════════════════════════════════════════════ */}
+        {/* ══ TAB: CLOSET ══ */}
         {tab === "closet" && (
           <div className="panel">
             <div className="panel-row panel-row-split">
@@ -226,26 +283,19 @@ export default function App() {
               </div>
             </div>
 
-            {/* Add form */}
             <div className="add-form">
               <div className="form-row">
                 <div className="field">
                   <label>Item *</label>
-                  <input
-                    placeholder="e.g. T-shirt, Chinos, Blazer"
-                    value={form.type}
+                  <input placeholder="e.g. T-shirt, Chinos, Blazer" value={form.type}
                     onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
-                    onKeyDown={e => e.key === "Enter" && addItem()}
-                  />
+                    onKeyDown={e => e.key === "Enter" && addItem()} />
                 </div>
                 <div className="field">
                   <label>Color *</label>
-                  <input
-                    placeholder="e.g. Navy, Cream, Olive"
-                    value={form.color}
+                  <input placeholder="e.g. Navy, Cream, Olive" value={form.color}
                     onChange={e => setForm(f => ({ ...f, color: e.target.value }))}
-                    onKeyDown={e => e.key === "Enter" && addItem()}
-                  />
+                    onKeyDown={e => e.key === "Enter" && addItem()} />
                 </div>
                 <div className="field">
                   <label>Style</label>
@@ -255,37 +305,55 @@ export default function App() {
                 </div>
                 <div className="field field-grow">
                   <label>Notes</label>
-                  <input
-                    placeholder="slim fit, cropped, vintage..."
-                    value={form.notes}
+                  <input placeholder="slim fit, cropped, vintage..." value={form.notes}
                     onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                    onKeyDown={e => e.key === "Enter" && addItem()}
-                  />
+                    onKeyDown={e => e.key === "Enter" && addItem()} />
                 </div>
                 <button className="btn btn-primary" onClick={addItem}>Add</button>
               </div>
-              {addMsg && (
-                <div className={`inline-msg ${addMsg.type}`}>{addMsg.text}</div>
-              )}
+              {addMsg && <div className={`inline-msg ${addMsg.type}`}>{addMsg.text}</div>}
             </div>
 
-            {/* Wardrobe list */}
+            {/* ── Category filter bar ── */}
+            {wardrobe.length > 0 && (
+              <div className="category-filter">
+                <button className={`cat-btn ${activeCategory === "all" ? "cat-btn-active" : ""}`}
+                  onClick={() => setActiveCategory("all")}>
+                  All ({wardrobe.length})
+                </button>
+                {CATEGORIES.filter(c => categoryCounts[c.key] > 0).map(cat => (
+                  <button key={cat.key}
+                    className={`cat-btn ${activeCategory === cat.key ? "cat-btn-active" : ""}`}
+                    onClick={() => setActiveCategory(cat.key)}>
+                    {cat.label} ({categoryCounts[cat.key]})
+                  </button>
+                ))}
+              </div>
+            )}
+
             {wardrobe.length === 0 ? (
               <div className="empty-state">
                 <div className="empty-icon">👔</div>
-                <p>Your closet is empty. Add items above or load the demo wardrobe.</p>
+                <p>Your closet is empty.</p>
+                <p className="empty-sub">
+                  Add items above or{" "}
+                  <button className="link-btn" onClick={loadDemo}>load the demo wardrobe</button>
+                  {" "}to get started.
+                </p>
               </div>
+            ) : filteredWardrobe.length === 0 ? (
+              <div className="empty-state"><p>No items in this category yet.</p></div>
             ) : (
               <div className="wardrobe-list">
-                {wardrobe.map((item, i) => (
-                  <div key={i} className="wardrobe-item">
-                    <div className="item-color-dot" style={{ background: colorDot(item.color) }} />
+                {filteredWardrobe.map(item => (
+                  <div key={item._idx} className="wardrobe-item">
                     <div className="item-icon">{clothingIcon(item.type)}</div>
+                    <div className="item-color-dot" style={{ background: colorDot(item.color) }} title={item.color} />
                     <div className="item-body">
                       <span className="item-name">{item.color} {item.type}</span>
                       <span className="item-meta">{item.style}{item.notes ? ` · ${item.notes}` : ""}</span>
                     </div>
-                    <button className="item-remove" onClick={() => removeItem(i)}>✕</button>
+                    <button className="item-remove" onClick={() => removeItem(item._idx)}>✕</button>
                   </div>
                 ))}
               </div>
@@ -302,38 +370,29 @@ export default function App() {
           </div>
         )}
 
-        {/* ══════════════════════════════════════════════════
-            TAB: GENERATE
-        ══════════════════════════════════════════════════ */}
+        {/* ══ TAB: GENERATE ══ */}
         {tab === "generate" && (
           <div className="panel">
             <div className="section-header">
               <h2>Generate Outfits</h2>
               <p className="section-sub">
-                Tell WardrobeAI your occasion. The RAG system will retrieve relevant
-                fashion rules to ground the suggestions.
+                Tell WardrobeAI your occasion. The RAG system retrieves relevant fashion rules to ground the suggestions.
               </p>
             </div>
 
             <div className="generate-form">
               <div className="field field-full">
                 <label>Occasion *</label>
-                <input
-                  className="input-lg"
+                <input className="input-lg"
                   placeholder="e.g. Business casual Friday, Date night, Job interview, Casual weekend..."
-                  value={occasion}
-                  onChange={e => setOccasion(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && generateOutfits()}
-                />
+                  value={occasion} onChange={e => setOccasion(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && generateOutfits()} />
               </div>
               <div className="field field-full">
                 <label>Style preference <span className="optional">(optional)</span></label>
-                <input
-                  className="input-lg"
+                <input className="input-lg"
                   placeholder="e.g. Minimalist, Smart casual, Streetwear, Classic..."
-                  value={stylePref}
-                  onChange={e => setStylePref(e.target.value)}
-                />
+                  value={stylePref} onChange={e => setStylePref(e.target.value)} />
               </div>
 
               {error && <div className="inline-msg error">{error}</div>}
@@ -341,44 +400,49 @@ export default function App() {
               <div className="generate-actions">
                 <div className="wardrobe-count-chip">
                   {wardrobe.length} item{wardrobe.length !== 1 ? "s" : ""} in closet
-                  {wardrobe.length === 0 && (
-                    <button className="link-btn" onClick={() => setTab("closet")}> — add some first</button>
-                  )}
+                  {wardrobe.length === 0 && <button className="link-btn" onClick={() => setTab("closet")}> — add some first</button>}
+                  {wardrobe.length > 0 && wardrobe.length < 3 && <span className="chip-warn"> — add a few more for better variety</span>}
                 </div>
-                <button
-                  className={`btn btn-primary btn-xl`}
-                  onClick={generateOutfits}
-                  disabled={loading}
-                >
+                <button className="btn btn-primary btn-xl" onClick={generateOutfits} disabled={loading}>
                   {loading ? <><span className="spinner" />Generating…</> : "Get Outfits"}
                 </button>
               </div>
             </div>
 
-            {/* Full-screen loading overlay */}
             {loading && <LoadingScreen occasion={occasion} />}
 
-            {/* RAG explanation card */}
-            <div className="rag-explainer-card">
-              <div className="rag-explainer-icon">🧠</div>
-              <div>
-                <strong>How RAG improves your results</strong>
-                <p>
-                  When you hit "Get Outfits", WardrobeAI first <em>retrieves</em> the most relevant
-                  fashion rules from its {ragKb.length}-document knowledge base (matching on occasion
-                  keywords + your wardrobe styles). These rules are then <em>injected</em> into the
-                  prompt before the LLM generates suggestions — that's Retrieval-Augmented Generation.
-                  The retrieved rules appear in the Outfits tab so you can see exactly what knowledge
-                  grounded the response.
-                </p>
+            {!loading && (
+              <div className="rag-explainer-card">
+                <div className="rag-explainer-icon">🧠</div>
+                <div>
+                  <strong>How RAG improves your results</strong>
+                  <p>
+                    When you hit "Get Outfits", WardrobeAI first <em>retrieves</em> the most relevant
+                    fashion rules from its {ragKb.length}-document knowledge base — using keyword + synonym
+                    matching to handle natural language like "networking event" or "brunch". Those rules are{" "}
+                    <em>injected</em> into the Llama prompt before generation. That's Retrieval-Augmented Generation.
+                  </p>
+                </div>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ══ TAB: OUTFITS — empty state ══ */}
+        {tab === "outfits" && !outfitResult && (
+          <div className="panel">
+            <div className="empty-state">
+              <div className="empty-icon">✨</div>
+              <p>No outfits generated yet.</p>
+              <p className="empty-sub">
+                <button className="link-btn" onClick={() => setTab("generate")}>Go to Generate</button>
+                {" "}to build outfits from your closet.
+              </p>
             </div>
           </div>
         )}
 
-        {/* ══════════════════════════════════════════════════
-            TAB: OUTFITS
-        ══════════════════════════════════════════════════ */}
+        {/* ══ TAB: OUTFITS — results ══ */}
         {tab === "outfits" && outfitResult && (
           <div className="panel">
             <div className="section-header">
@@ -386,12 +450,11 @@ export default function App() {
               <p className="section-sub">For: <em>{occasion}</em>{stylePref ? ` · ${stylePref}` : ""}</p>
             </div>
 
-            {/* RAG retrieved docs */}
             {ragDocs.length > 0 && (
               <div className="rag-retrieved">
                 <div className="rag-retrieved-header">
                   <span className="rag-label">RAG</span>
-                  <span>{ragDocs.length} fashion rule{ragDocs.length !== 1 ? "s" : ""} retrieved and used to ground this response</span>
+                  <span>{ragDocs.length} fashion rule{ragDocs.length !== 1 ? "s" : ""} retrieved and injected into this response</span>
                 </div>
                 <div className="rag-retrieved-docs">
                   {ragDocs.map(d => (
@@ -404,27 +467,20 @@ export default function App() {
               </div>
             )}
 
-            {/* Outfit cards — parsed from LLM markdown into structured cards */}
             {(() => {
               const parsed = parseOutfits(outfitResult);
               if (parsed.length > 0) {
                 return (
                   <div className="outfit-cards">
                     {parsed.map((outfit, i) => (
-                      <OutfitCard key={i} outfit={outfit} index={i} />
+                      <OutfitCard key={i} outfit={outfit} index={i} wardrobe={wardrobe} />
                     ))}
                   </div>
                 );
               }
-              // Fallback: if parsing fails, show raw markdown
-              return (
-                <div className="outfit-response">
-                  <ReactMarkdown>{outfitResult}</ReactMarkdown>
-                </div>
-              );
+              return <div className="outfit-response"><ReactMarkdown>{outfitResult}</ReactMarkdown></div>;
             })()}
 
-            {/* Follow-up chat */}
             <div className="followup-section">
               <h3 className="followup-title">Refine or ask follow-up questions</h3>
               <p className="followup-sub">Try: "Make Outfit 2 more formal" · "Swap the sneakers for boots" · "What if it's cold outside?"</p>
@@ -434,10 +490,7 @@ export default function App() {
                   {chatHistory.map((msg, i) => (
                     <div key={i} className={`chat-msg chat-msg-${msg.role}`}>
                       <div className="chat-bubble">
-                        {msg.role === "user"
-                          ? msg.content
-                          : <ReactMarkdown>{msg.content}</ReactMarkdown>
-                        }
+                        {msg.role === "user" ? msg.content : <ReactMarkdown>{msg.content}</ReactMarkdown>}
                       </div>
                     </div>
                   ))}
@@ -453,19 +506,11 @@ export default function App() {
               )}
 
               <div className="chat-input-row">
-                <input
-                  className="chat-input"
-                  placeholder="Ask a follow-up question..."
-                  value={followup}
-                  onChange={e => setFollowup(e.target.value)}
-                  onKeyDown={handleFollowupKey}
-                  disabled={chatLoading}
-                />
-                <button
-                  className={`btn btn-primary ${chatLoading ? "btn-loading" : ""}`}
-                  onClick={sendFollowup}
-                  disabled={chatLoading || !followup.trim()}
-                >
+                <input className="chat-input" placeholder="Ask a follow-up question..."
+                  value={followup} onChange={e => setFollowup(e.target.value)}
+                  onKeyDown={handleFollowupKey} disabled={chatLoading} />
+                <button className={`btn btn-primary ${chatLoading ? "btn-loading" : ""}`}
+                  onClick={sendFollowup} disabled={chatLoading || !followup.trim()}>
                   {chatLoading ? <span className="spinner" /> : "Send"}
                 </button>
               </div>
@@ -481,48 +526,49 @@ export default function App() {
   );
 }
 
-// Map color names to approximate hex for visual dots
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
 function colorDot(color) {
   const map = {
-    white: "#f5f5f5", black: "#222", navy: "#1a2a5e", grey: "#9e9e9e",
-    gray: "#9e9e9e", olive: "#6b7c3a", cream: "#f5f0e0", charcoal: "#444",
+    white: "#f0ede6", black: "#222", navy: "#1a2a5e", grey: "#9e9e9e",
+    gray: "#9e9e9e", olive: "#6b7c3a", cream: "#f5f0e0", charcoal: "#4a4a44",
     tan: "#c4a56a", beige: "#d9c9a8", "dark wash": "#2c3e6b", canvas: "#c8b97a",
     red: "#c62828", blue: "#1565c0", green: "#2e7d32", brown: "#5d4037",
     pink: "#e91e8c", yellow: "#f9a825", orange: "#e65100", purple: "#6a1b9a",
+    burgundy: "#6d1a2a", camel: "#c19a6b", rust: "#b7410e", teal: "#00695c",
+    khaki: "#c3b091", denim: "#4e6b8c", mustard: "#c8963e", coral: "#e8735a",
   };
   return map[color.toLowerCase()] || "#bdbdbd";
 }
 
-// Return an emoji icon based on clothing type keywords
 function clothingIcon(type) {
   const t = type.toLowerCase();
-  if (t.includes("shirt") || t.includes("oxford") || t.includes("blouse")) return "👔";
   if (t.includes("t-shirt") || t.includes("tee") || t.includes("tank")) return "👕";
+  if (t.includes("shirt") || t.includes("oxford") || t.includes("blouse") || t.includes("polo")) return "👔";
   if (t.includes("jacket") || t.includes("blazer") || t.includes("coat")) return "🧥";
   if (t.includes("sweater") || t.includes("knit") || t.includes("hoodie") || t.includes("jumper")) return "🧶";
   if (t.includes("jeans") || t.includes("trouser") || t.includes("chino") || t.includes("pant")) return "👖";
-  if (t.includes("skirt")) return "👗";
-  if (t.includes("dress")) return "👗";
-  if (t.includes("shoe") || t.includes("sneaker") || t.includes("boot") || t.includes("loafer") || t.includes("heel")) return "👟";
+  if (t.includes("skirt") || t.includes("dress")) return "👗";
+  if (t.includes("sneaker") || t.includes("shoe") || t.includes("boot") || t.includes("loafer") || t.includes("heel")) return "👟";
   if (t.includes("bag") || t.includes("tote") || t.includes("backpack") || t.includes("purse")) return "👜";
   if (t.includes("hat") || t.includes("cap") || t.includes("beanie")) return "🧢";
   if (t.includes("scarf")) return "🧣";
   if (t.includes("sock")) return "🧦";
   if (t.includes("suit")) return "🤵";
+  if (t.includes("belt") || t.includes("watch") || t.includes("tie")) return "⌚";
   return "👚";
 }
 
-// Parse the raw markdown from the LLM into structured outfit objects
-// Looks for ## Outfit N: Name blocks and extracts items, why, tip
 function parseOutfits(markdown) {
   if (!markdown) return [];
-  const outfitBlocks = markdown.split(/(?=##\s*Outfit\s*\d)/i).filter(b => b.trim());
-  return outfitBlocks.map((block, idx) => {
-    const nameMatch = block.match(/##\s*Outfit\s*\d+[:\.\-]?\s*(.+)/i);
+  const blocks = markdown.split(/(?=##\s*Outfit\s*\d)/i).filter(b => b.trim());
+  return blocks.map((block, idx) => {
+    const nameMatch  = block.match(/##\s*Outfit\s*\d+[:\.\-]?\s*(.+)/i);
     const itemsMatch = block.match(/\*\*Items?[:\*]*\*?\*?\s*([^\n]+(?:\n(?!\*\*)[^\n]+)*)/i);
-    const whyMatch  = block.match(/\*\*Why it works[:\*]*\*?\*?\s*([^\n]+(?:\n(?!\*\*)[^\n]+)*)/i);
-    const tipMatch  = block.match(/\*\*Styling tip[:\*]*\*?\*?\s*([^\n]+(?:\n(?!\*\*)[^\n]+)*)/i);
-
+    const whyMatch   = block.match(/\*\*Why it works[:\*]*\*?\*?\s*([^\n]+(?:\n(?!\*\*)[^\n]+)*)/i);
+    const tipMatch   = block.match(/\*\*Styling tip[:\*]*\*?\*?\s*([^\n]+(?:\n(?!\*\*)[^\n]+)*)/i);
     return {
       number: idx + 1,
       name:  nameMatch  ? nameMatch[1].replace(/\*+/g, "").trim()  : `Outfit ${idx + 1}`,
@@ -533,10 +579,22 @@ function parseOutfits(markdown) {
   }).filter(o => o.name || o.items);
 }
 
-// Accent colors for outfit cards — one per card, cycles
+// Match each outfit item string back to a wardrobe item to pull its color hex
+function resolveItemColors(itemList, wardrobe) {
+  return itemList.map(itemText => {
+    const lower = itemText.toLowerCase();
+    const match = wardrobe.find(w =>
+      lower.includes(w.type.toLowerCase()) || lower.includes(w.color.toLowerCase())
+    );
+    return match ? { hex: colorDot(match.color), label: `${match.color} ${match.type}` } : null;
+  }).filter(Boolean);
+}
+
 const CARD_ACCENTS = ["#2a3f6f", "#1e5c3e", "#5c3a1e", "#4a1e5c", "#1e4a5c"];
 
-// The branded loading screen shown during the ~10s generation wait
+// ─────────────────────────────────────────────────────────────────────────────
+// LOADING SCREEN
+// ─────────────────────────────────────────────────────────────────────────────
 function LoadingScreen({ occasion }) {
   const steps = [
     { icon: "🔍", label: "Scanning your closet" },
@@ -546,7 +604,7 @@ function LoadingScreen({ occasion }) {
   ];
   const [step, setStep] = useState(0);
   useEffect(() => {
-    const iv = setInterval(() => setStep(s => Math.min(s + 1, steps.length - 1)), 2200);
+    const iv = setInterval(() => setStep(s => Math.min(s + 1, steps.length - 1)), 2400);
     return () => clearInterval(iv);
   }, []);
   return (
@@ -561,7 +619,7 @@ function LoadingScreen({ occasion }) {
               <span className="loading-step-icon">{s.icon}</span>
               <span className="loading-step-label">{s.label}</span>
               {i < step && <span className="loading-step-check">✓</span>}
-              {i === step && <span className="loading-step-dots"><span className="dot"/><span className="dot"/><span className="dot"/></span>}
+              {i === step && <span className="loading-step-dots"><span className="dot" /><span className="dot" /><span className="dot" /></span>}
             </div>
           ))}
         </div>
@@ -571,20 +629,29 @@ function LoadingScreen({ occasion }) {
   );
 }
 
-// A single parsed outfit rendered as a rich card
-function OutfitCard({ outfit, index }) {
-  const accent = CARD_ACCENTS[index % CARD_ACCENTS.length];
-  const itemList = outfit.items
-    ? outfit.items.split(/,\s*/).filter(Boolean)
-    : [];
+// ─────────────────────────────────────────────────────────────────────────────
+// OUTFIT CARD — with color palette swatches
+// ─────────────────────────────────────────────────────────────────────────────
+function OutfitCard({ outfit, index, wardrobe }) {
+  const accent   = CARD_ACCENTS[index % CARD_ACCENTS.length];
+  const itemList = outfit.items ? outfit.items.split(/,\s*/).filter(Boolean) : [];
+  const palette  = resolveItemColors(itemList, wardrobe);
 
   return (
     <div className="outfit-card" style={{ "--card-accent": accent }}>
       <div className="outfit-card-header">
-        <div className="outfit-card-number" style={{ background: accent }}>
-          {outfit.number}
+        <div className="outfit-card-number" style={{ background: accent }}>{outfit.number}</div>
+        <div className="outfit-card-title-group">
+          <h3 className="outfit-card-name">{outfit.name}</h3>
+          {palette.length > 0 && (
+            <div className="color-palette">
+              {palette.map((p, i) => (
+                <div key={i} className="color-swatch" style={{ background: p.hex }} title={p.label} />
+              ))}
+              <span className="palette-label">palette</span>
+            </div>
+          )}
         </div>
-        <h3 className="outfit-card-name">{outfit.name}</h3>
       </div>
 
       {itemList.length > 0 && (

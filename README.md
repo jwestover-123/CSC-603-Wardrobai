@@ -2,8 +2,6 @@
 
 > AI-powered outfit assistant — CSC 603/803 Capstone · Spring 2026
 
-> TEAM MEMBERS - Team Lead: Jordan Westover  Backend Lead: Derek Ye    Frontend Lead: Diane Bilse 
-
 WardrobeAI helps users build outfits from clothes they already own.
 You describe your wardrobe, enter an occasion, and the AI suggests styled outfits with explanations.
 
