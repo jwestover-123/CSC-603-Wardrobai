@@ -122,7 +122,7 @@ export default function App() {
 
   const loadDemo = () => {
     setWardrobe(DEMO_WARDROBE);
-    setAddMsg({ type: "ok", text: "Demo wardrobe loaded — 10 items." });
+    setAddMsg({ type: "ok", text: "Demo wardrobe loaded — 25 items." });
     setTimeout(() => setAddMsg(null), 2500);
   };
 
@@ -344,16 +344,18 @@ export default function App() {
             ) : filteredWardrobe.length === 0 ? (
               <div className="empty-state"><p>No items in this category yet.</p></div>
             ) : (
-              <div className="wardrobe-list">
+              <div className="wardrobe-grid">
                 {filteredWardrobe.map(item => (
-                  <div key={item._idx} className="wardrobe-item">
-                    <div className="item-icon">{clothingIcon(item.type)}</div>
-                    <div className="item-color-dot" style={{ background: colorDot(item.color) }} title={item.color} />
-                    <div className="item-body">
-                      <span className="item-name">{item.color} {item.type}</span>
-                      <span className="item-meta">{item.style}{item.notes ? ` · ${item.notes}` : ""}</span>
+                  <div key={item._idx} className="wardrobe-card">
+                    <div className="wardrobe-card-color" style={{ background: colorDot(item.color) }}>
+                      <span className="wardrobe-card-emoji">{clothingIcon(item.type)}</span>
+                      <button className="wardrobe-card-remove" onClick={() => removeItem(item._idx)}>✕</button>
                     </div>
-                    <button className="item-remove" onClick={() => removeItem(item._idx)}>✕</button>
+                    <div className="wardrobe-card-body">
+                      <span className="wardrobe-card-name">{item.color} {item.type}</span>
+                      <span className="wardrobe-card-meta">{item.style}</span>
+                      {item.notes && <span className="wardrobe-card-notes">{item.notes}</span>}
+                    </div>
                   </div>
                 ))}
               </div>
