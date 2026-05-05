@@ -36,7 +36,7 @@ WardrobeAI demonstrates **Retrieval-Augmented Generation** — one of the most i
 
 2. **Retrieval** — When a user submits an occasion + wardrobe, `simple_rag_retrieve()` scores each document against the query using keyword overlap (production systems use cosine similarity over sentence embeddings like `text-embedding-3-small`).
 
-3. **Augmented Generation** — The top-4 retrieved rules are injected into the LLM prompt before calling Claude. The model sees both the user's wardrobe *and* expert fashion knowledge it might not reliably produce on its own.
+3. **Augmented Generation** — The top-4 retrieved rules are injected into the LLM prompt before calling llama. The model sees both the user's wardrobe *and* expert fashion knowledge it might not reliably produce on its own.
 
 4. **Transparency** — The UI shows exactly which documents were retrieved for each generation, making the RAG pipeline visible and explainable.
 
@@ -47,7 +47,7 @@ User query + wardrobe
         ↓
   Augmented Prompt (wardrobe + rules + occasion)
         ↓
-  LLM Generation (Claude Sonnet)
+  LLM Generation (Llama3.1:8b)
         ↓
   Outfit suggestions grounded in fashion knowledge
 ```
