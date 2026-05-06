@@ -495,4 +495,4 @@ if __name__ == "__main__":
     print(f"  Season: {get_season()} ({get_month_name()})")
     print(f"  Sessions loaded: {len(sessions)}")
     print("  Override model: OLLAMA_MODEL=llama3.2 python app.py")
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5001)
